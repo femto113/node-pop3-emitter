@@ -2,7 +2,7 @@
 
 ## Motivation
 
-This repository is a companion to [node-smtp-receiver](/femto113/node-smtp-receiver),
+This repository is a companion to [node-smtp-receiver](//github.com/femto113/node-smtp-receiver),
 and shares a similar design.  Together they provide a the ability to implement a
 simple mail server capable of receiving messages from other servers via SMTP and
 retrieving those message via POP3.
@@ -185,7 +185,7 @@ to the list, e.g. if you implement some custom command in a `connected` listener
 
 ## Alternatives
 
-This module is similar in functionality to [pop3-server](/marook/pop3-server),
+This module is similar in functionality to [pop3-server](//github.com/marook/pop3-server),
 which is LGPL licensed if you're looking for that flavor.  If you're looking for 
 a turnkey POP3 server implementation (including mail storage and authentication) 
-take a look at Nodemailer's [wildduck](/nodemailer/wildduck).
+take a look at Nodemailer's [wildduck](//github.com/nodemailer/wildduck).
