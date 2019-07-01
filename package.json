@@ -1,0 +1,12 @@
+{
+  "author": "Ken Woodruff <ken.woodruff@gmail.com>",
+  "name": "pop3-emitter",
+  "version": "1.0.0",
+  "description": "zero-dependency evented POP3 server object",
+  "keywords": ["POP3", "pop3", "pop3 server", "email"],
+  "homepage": "https://github.com/femto113/node-pop3-emitter#readme",
+  "license": "MIT",
+ "repository": "github:femto113/node-pop3-emitter",
+  "dependencies": {},
+  "devDependencies": {}
+}

@@ -1,0 +1,22 @@
+{
+  "alice@example.com": {
+    "password": "alice's-password",
+    "messages": []
+  },
+  "bob@example.com": {
+    "password": "bob's-password",
+    "messages": []
+  },
+  "carol@example.com": {
+    "password": "carol's-password",
+    "messages": []
+  },
+  "delete@example.com": {
+    "password": "delete's-password",
+    "messages": []
+  },
+  "empty@example.com": {
+    "password": "empty's-password",
+    "messages": []
+  }
+}
