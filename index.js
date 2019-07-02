@@ -114,8 +114,10 @@ POP3Server.prototype.capabilities = function (state, callback) {
 };
 
 POP3Server.prototype.authenticate = function (user, password, method, hashfunc, callback) {
-  if (!this.emit('authenticate', user, password, method, hashfunc, callback))
-    return callback(true); // TODO: config for default no auth behavior (e.g. "allowAll"?)
+  if (!this.emit('authenticate', user, password, method, hashfunc, callback)) {
+    this.emit('error', method + " command received but no authenticate listeners found");
+    return callback(false);
+  }
 };
 
 POP3Server.prototype.list = function (user, which, callback) {
