@@ -56,13 +56,13 @@ server.on('uidl', function(user, which, callback) {
   });
 });
 
-server.on('authenticate', function (user, hashfunc, password, callback) {
+server.on('authenticate', function (user, password, method, hashfunc, callback) {
   mailstore.get_mailbox(user, function (err, mailbox) {
     if (err) return callback(false);
     hashed = hashfunc(mailbox.password)
     ok = hashed === password;
     if (!ok)
-      console.log("hashfunc(%j) => %j !== %j", mailbox.password, hashed, password);
+      console.log("%j(%j) => %j !== %j", method, mailbox.password, hashed, password);
     return callback(ok);
   });
 });
@@ -80,10 +80,14 @@ server.on('retrieve', function (user, which, callback) {
 
 server.on('quit', function (user, dele, callback) {
   mailstore.get_mailbox(user, function (err, mailbox) {
-    return callback(false); // TODO: take an err param? would be more node-y
-    // splice out the deleted messages
-    // this is done in reverse order to preserve which == index + 1 relationship
-    dele.sort().reverse().forEach(which => mailbox.messages.splice(which - 1, 1));
+    if (err)
+      return callback(false); // TODO: take an err param? would be more node-y
+    if (dele) {
+      console.log('on quit: deleting %d messages', dele.length);
+      // splice out the deleted messages
+      // this is done in reverse order to preserve which == index + 1 relationship
+      dele.sort().reverse().forEach(which => mailbox.messages.splice(which - 1, 1));
+    }
     return callback(true);
   });
 });
