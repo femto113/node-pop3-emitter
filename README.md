@@ -21,7 +21,9 @@ management to the parent application by emitting events.
 ## Basic Usage
 
 Similar to node's `HTTPSever`, you call `createServer` to create a `POP3Server` object and then call
-its `listen` method to tell it what port to listen on.
+its `listen` method to tell it what port to listen on:
+
+    const pop3 = require('pop3-emitter');
 
     var server = pop3.createServer('example.com');
     server.listen(110);
@@ -38,6 +40,10 @@ by the application to identify the appropriate mailbox to take action on.
 - method: string indicating command used to provide password (`"PASS"` or `"APOP"`)
 - hashfunc: a method that applied to a plaintext secret known to the server should yield a match to password
 - callback: function taking a boolean indicating success or failure of authentication
+
+NOTE: you must listen for this event if you expect clients to attempt to 
+authorize.  If you do not any attempt will emit an error event and return
+an error to the client.
 
 In its most common form POP3 accepts passwords in two ways, neither of which is
 particularly secure.  With the `APOP` command the password is an MD5 hash of the
