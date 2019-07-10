@@ -1,8 +1,8 @@
-var events = require('events');
-var net = require('net');
-var util = require('util');
-var crypto = require('crypto');
-var tls = require('tls');
+var events = require('events'),
+    net = require('net'),
+    util = require('util'),
+    crypto = require('crypto'),
+    tls = require('tls');
 
 var POP3Grammar = {
   // in POP3 the available commands vary by state
@@ -13,7 +13,8 @@ var POP3Grammar = {
       "APOP": "username digest",
       "CAPA": null,
       "QUIT": null,
-      "STLS": null
+      "STLS": null,
+      "AUTH": "mechanism [initial-response]"
     },
     "TRANSACTION": {
       "CAPA": null,
@@ -36,7 +37,14 @@ var POP3Grammar = {
   // which is announced by the format of the hello message, and PASS
   // which is implied by the USER capability)
   // see https://tools.ietf.org/rfc/rfc2449.txt
-  capabilities: [ "TOP", "UIDL", "USER", "STLS" ],
+  // key is the command, value is what's sent as a capability
+  capabilities: {
+    "TOP": "TOP",
+    "UIDL": "UIDL",
+    "USER": "USER",
+    "STLS": "STLS",
+    "AUTH": "SASL PLAIN"
+  },
   "EOL": "\r\n"
 };
 
@@ -67,7 +75,7 @@ function POP3Server(hostname, options) {
     this.on("connection", function (socket) {
         connection = new POP3Connection(this, socket, this.apop && this.shake());
         callback = function (ok) {
-          if (!ok) return connection.socket.end();
+          if (!ok) return connection.end();
           return connection.respondHello();
         };
         if (!this.emit('connected', connection, callback))
@@ -99,14 +107,15 @@ POP3Server.prototype.capabilities = function (state, callback) {
   // per the RFC:
   // Capabilities available in the AUTHORIZATION state MUST be announced
   // in both states.
-  capabilities = POP3Grammar.capabilities.filter(function (c) {
+  extensions = Object.keys(POP3Grammar.capabilities).filter(function (c) {
       return c in POP3Grammar.states[state] ||
              state !== "AUTHORIZATION" &&
              c in POP3Grammar.states["AUTHORIZATION"];
   });
-  // do not include STLS capability if starttls not-enabled
+  capabilities = extensions.map(e => POP3Grammar.capabilities[e]);
+  // do not include STLS capability if starttls not enabled
   if (!this.starttlsEnabled) {
-    stls = capabilities.indexOf(POP3Grammar.EOL);
+    stls = capabilities.indexOf('STLS');
     if (stls >= 0) capabilities.slice(stls, 1);
   }
   if (!this.emit('capabilities', capabilities, callback))
@@ -186,7 +195,7 @@ function POP3Connection(server, socket, salt) {
 
   // start every connection in authorization state
   this.state = "AUTHORIZATION";
-  this.user = null;  // populated by USER or APOP
+  this.user = null;  // populated by USER, APOP, or AUTH
   this.sizes = null; // populated by STAT or LIST
   this.dele = {};    // populated by DELE, cleared by RSET
 
@@ -271,45 +280,39 @@ POP3Connection.prototype.starttls = function (callback) {
       return callback("TLS already started");
     }
 
+    this.server.log("starting TLS")
+
     socketOptions = Object.assign({}, this.server.tlsOptions);
     socketOptions.SNICallback = function (servername, snicb) {
         this.server.log("SNICallback", servername);
         return snicb(null, this.server.secureContext);
     }.bind(this);
 
-    let returned = false;
-    let onError = function (err) {
-        this.server.log("STARTTLS ERROR", err)
-        returned = true;
+    var errorOnStart = false;
+    var onError = function (err) {
+        this.server.log("TLS error:", err)
+        errorOnStart = true;
         // TODO: raise an error on the server?
     }.bind(this);
 
     this.socket.once('error', onError);
       
     // upgrade connection
-    this.server.log("starttls: creating TLSSocket...")
     let tlsSocket = new tls.TLSSocket(this.socket, socketOptions);
-    this.server.log("starttls: TLSSocket created")
 
     const unexpected_events = ['error', 'close', '_tlsError', 'clientError', 'tlsClientError'];
 
     unexpected_events.forEach((e) => tlsSocket.once(e, onError));
 
     tlsSocket.on('secure', function () {
-        this.server.log("starttls: TLSSocket secure")
         this.socket.removeListener('error', onError);
         unexpected_events.forEach((e) => tlsSocket.removeListener(e, onError));
-        if (returned) {
-            try {
-                tlsSocket.end();
-            } catch (E) {
-                //
-            }
-            return;
+        if (errorOnStart) {
+          // attempt to end it, ignoring any exceptions
+          try { tlsSocket.end(); } catch (E) { }
+          return; // leave the existing socket in place
         }
-        returned = true;
-
-        this.server.log("starttls: tlsSocket.on('secure') replacing connection socket...")
+        this.server.log("TLS secure")
         this.setSocket(tlsSocket);
     }.bind(this));
 
@@ -381,8 +384,7 @@ POP3Connection.prototype.commands = {
       } else {
         // TODO: create a "send_enumeration" utility for these
         this.respondOk();
-        uids.forEach((uid, i) => this.writeLine('' + (i + 1) + ' ' + uid));
-        this.writeMultilineEnd();
+        this.writeLines(uids.map((uid, i) => [i + 1, uid].join(' ')));
       }
     }.bind(this, args[0]));
   },
@@ -416,13 +418,10 @@ POP3Connection.prototype.commands = {
         }
       }
       // else it's a multiline (TODO: unless empty?)
+      lines = sizes.filter((size, i) => !this.dele[i + 1])
+                   .map((size, i) => [i + 1, size].join(' '));
       this.respondOk('scan listing follows');
-      sizes.forEach(function (size, i) {
-        if (!this.dele[i + 1])
-          this.writeLine('' + (i + 1) + ' ' + size)
-      }.bind(this));
-      // TODO: supposed to send a total?
-      this.writeMultilineEnd();
+      this.writeLines(lines);
     }.bind(this);
     if (this.sizes !== null) {
       if (which) {
@@ -437,10 +436,12 @@ POP3Connection.prototype.commands = {
     var which = parseInt(args.shift());
     if (this.dele[which])
       return this.respondErr("no such message");
-    return this.server.retrieve(this.user, which, function (body) {
-        this.writeLine('+OK');
-        this.writeLine(body);
-        this.writeMultilineEnd();
+    return this.server.retrieve(this.user, which, function (message) {
+        if (!lines) return this.respondErr("no such message");
+        this.respondOk();
+        // a blank line should separate the headers from the body
+        lines = message.headers.concat('').concat(message.body);
+        this.writeLines(lines);
     }.bind(this));
   }, 
   "TOP": function (args) {
@@ -450,15 +451,15 @@ POP3Connection.prototype.commands = {
     // Per the RFC (https://tools.ietf.org/html/rfc1081) the second argument to TOP is optional.
     // The default values does not seem to be explicitly stated but the example suggests 10.
     var n = parseInt(args.shift() || "10");
-    return this.server.retrieve(this.user, which, function (body) {
-        if (!body) return this.respondErr("no such message");
-        this.writeLine('+OK');
-        // TODO: callback should take an array of lines rather than needing to do the split here
-        lines = body.split(POP3Grammar.EOL);
-        blank = body.indexOf('');
-        for (i = 0; i <= blank + n && i < lines.length; i++)
-          this.writeLine(lines[i]);
-        this.writeMultilineEnd();
+    return this.server.retrieve(this.user, which, function (message) {
+        if (!lines) return this.respondErr("no such message");
+        lines = message.headers.concat('')
+        // NOTE: the delimiter for counting lines in the context of the message body isn't
+        // defined by the POP3 RFC, and it is not uncommon for bodies to use mixed delimiters
+        // (or even HTML <br/> tags) to delimit them.  Here we just split on \n or \r\n.
+        if (n > 0) lines = lines.concat(message.body.split(/\r?\n/).slice(0, n));
+        this.respondOk();
+        this.writeLines(lines);
     }.bind(this));
   }, 
   "DELE": function (args) {
@@ -485,36 +486,51 @@ POP3Connection.prototype.commands = {
 };
 
 POP3Connection.prototype.writeLine = function (line) {
-    if (this.server.debug) this.server.log("S:", line);
-    this.socket.write(line);
-    return this.socket.write(POP3Grammar.EOL);
-};
-
-POP3Connection.prototype.respondOk = function (extra) {
-    if (typeof extra !== "undefined")
-      return this.writeLine(['+OK', extra].join(' '));
-    return this.writeLine('+OK');
-};
-
-POP3Connection.prototype.respondErr = function (err) {
-    return this.writeLine(['-ERR', err].join(' '));
+  if (this.server.debug) this.server.log("S:", line);
+  this.socket.write(line);
+  return this.socket.write(POP3Grammar.EOL);
 };
 
 POP3Connection.prototype.writeMultilineEnd = function () {
-    return this.writeLine('.');
+  return this.writeLine('.');
+};
+
+POP3Connection.prototype.writeLines = function (lines) {
+  lines.forEach(this.writeLine);
+  return this.writeMultilineEnd();
+};
+
+POP3Connection.prototype.respondOk = function (extra) {
+  if (typeof extra !== "undefined")
+    return this.writeLine(['+OK', extra].join(' '));
+  return this.writeLine('+OK');
+};
+
+POP3Connection.prototype.respondErr = function (err) {
+  return this.writeLine(['-ERR', err].join(' '));
 };
 
 POP3Connection.prototype.helloMessage = function () {
-    return 'POP3 server ready' + (this.salt ? ' ' + this.salt : '');
+  return 'POP3 server ready' + (this.salt ? ' ' + this.salt : '');
 };
 
 POP3Connection.prototype.respondHello = function () {
-    return this.respondOk(this.helloMessage());
+  return this.respondOk(this.helloMessage());
 };
 
 POP3Connection.prototype.bye = function () {
-    this.respondOk('bye');
-    return this.socket.end();
+  this.respondOk('bye');
+  return this.end();
+};
+
+POP3Connection.prototype.end = function () {
+  if (this.socket) {
+    this.socket.end();
+    this.socket.destroy();
+    delete this.socket;
+  }
+  return this.removeAllListeners();
+  // TODO: verify connection gets gc'd
 };
 
 module.exports.POP3Grammar = POP3Grammar;

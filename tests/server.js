@@ -74,7 +74,7 @@ server.on('retrieve', function (user, which, callback) {
       return callback(null); // TODO: take an err param? would be more node-y
     // NOTE: which values are 1 based, messages array is 0 based
     console.log(user, which, mailbox.messages[which - 1]);
-    return callback(mailbox.messages[which - 1].body);
+    return callback(mailbox.messages[which - 1]);
   });
 });
 

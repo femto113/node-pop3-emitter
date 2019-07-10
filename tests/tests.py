@@ -3,7 +3,9 @@
 
 from __future__ import print_function
 
+import sys
 from poplib import POP3, error_proto
+from email.parser import Parser
 import unittest
 import json
 import random
@@ -15,7 +17,6 @@ PORT = 110
 # tests for remaining commands supported by poplib
 #     POP3.rpop(user) # Not supported, should always err or does capa handle this case?
 #     POP3.utf8()
-#     POP3.stls(context=None)
 # test mailbox locking?
 
 class POP3TestCase(unittest.TestCase):
@@ -45,7 +46,7 @@ class POP3TestCase(unittest.TestCase):
             self.mailboxes = json.load(f)
             self.addresses = sorted(self.mailboxes.keys())
         # Turning this on will echo the full conversation, useful for debugging
-        self.pop3.set_debuglevel(True)
+        # self.pop3.set_debuglevel(True)
 
     def tearDown(self):
         self.pop3.quit()
@@ -70,18 +71,16 @@ class PreAuthTests(POP3TestCase):
         # TODO: is there any truly canonical text in POP3 welcome?
         self.assertIn("ready", response);
 
+    @unittest.skipUnless(sys.version_info >= (3,4), "capa() added in 3.4")
     def testCapa(self):
-        # NOTE: capa() was added in 3.4
-        if callable(getattr(self.pop3, 'capa', None)):
-            response = self.pop3.capa()
-            print("capa => ", response)
+        response = self.pop3.capa()
+        # no capabilities are guaranteed, so not much of an assertion to be made here
+        self.assertTrue(isinstance(response, dict))
         
-
+    @unittest.skipUnless(sys.version_info >= (3,4), "stls() added in 3.4")
     def testStls(self):
-        # NOTE: stls() was added in 3.4
-        if callable(getattr(self.pop3, 'stls', None)):
-            response = self.pop3.stls()
-            self.assertOk(response)
+        response = self.pop3.stls()
+        self.assertOk(response)
 
 class PostAuthTests(POP3TestCase):
     """Test POP3 mail listing and retrieval methods"""
@@ -139,14 +138,35 @@ class PostAuthTests(POP3TestCase):
             response = self.pop3.uidl()
             self.assertOk(response)
 
-    def testRetrWithInRangeIndex(self):
+    def testRetr(self):
         """The server responds to a RETR command."""
         response, lines, size = self.pop3.retr(1)
         self.assertOk(response)
         # make sure we got an email that was sent to the correct user
-        from email.parser import Parser
         m = Parser().parsestr("\n".join(map(lambda l: l.decode(), lines)))
-        self.assertIn(self.user, m["to"]);
+        self.assertIn(self.user, m["to"])
+        # make sure we got the whole body
+        if callable(getattr(m, 'get_body', None)):
+            body = m.get_body(preferencelist=('plain',))
+        else:
+            body = m.get_payload()
+        print(json.dumps(body));
+
+    def testTop(self):
+        n = 1
+        response, lines, size = self.pop3.top(1, n)
+        self.assertOk(response)
+        # parse the result
+        m = Parser().parsestr("\r\n".join(map(lambda l: l.decode(), lines)))
+        # make sure we got an email that was sent to the correct user
+        self.assertIn(self.user, m["to"])
+        # check to see if we got just one line of the body
+        if callable(getattr(m, 'get_body', None)):
+            body = m.get_body(preferencelist=('plain',))
+        else:
+            body = m.get_payload()
+        # body should be newline delimited at this point
+        self.assertEqual(len(body.split('\n')), n)
 
 class DeleteTests(POP3TestCase):
     """long form tests of delete related flow"""
