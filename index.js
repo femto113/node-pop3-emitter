@@ -381,7 +381,8 @@ POP3Connection.prototype.commands = {
         this.respondErr('no such message');
       } else if (uids.length == 1) {
         which = (typeof which == "undefined") ? 1 : which
-        this.respondOk(which + ' ' + uids[0]);
+        this.respondOk();
+        this.writeLines([which + ' ' + uids[0]]);
       } else {
         // TODO: create a "send_enumeration" utility for these
         this.respondOk();
